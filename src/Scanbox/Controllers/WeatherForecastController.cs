@@ -18,6 +18,8 @@ namespace Scanbox.Controllers
             _logger = logger;
         }
 
+        //https://api.scanbox.tech/weatherforecast
+        //http://localhost:5102/weatherforecast
         [HttpGet]
         public IEnumerable<WeatherForecast> Get()
         {
