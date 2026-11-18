@@ -1,16 +1,16 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.12.12405.243 stable
+VisualStudioVersion = 18.12.12405.243
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Scanbox", "src\Scanbox\Scanbox.csproj", "{88DBA0F9-8429-4D87-93B6-686DFD13F596}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "deploy", "deploy", "{09366F56-4908-4396-96EF-FAD0067E7007}"
 	ProjectSection(SolutionItems) = preProject
 		deploy\docker-compose.yml = deploy\docker-compose.yml
 	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Scanbox.Api", "src\Scanbox.Api\Scanbox.Api.csproj", "{9CF51D41-F573-4B7D-85DA-E2877CD8F427}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -18,16 +18,16 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{88DBA0F9-8429-4D87-93B6-686DFD13F596}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{88DBA0F9-8429-4D87-93B6-686DFD13F596}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{88DBA0F9-8429-4D87-93B6-686DFD13F596}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{88DBA0F9-8429-4D87-93B6-686DFD13F596}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9CF51D41-F573-4B7D-85DA-E2877CD8F427}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9CF51D41-F573-4B7D-85DA-E2877CD8F427}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9CF51D41-F573-4B7D-85DA-E2877CD8F427}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9CF51D41-F573-4B7D-85DA-E2877CD8F427}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{88DBA0F9-8429-4D87-93B6-686DFD13F596} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{9CF51D41-F573-4B7D-85DA-E2877CD8F427} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {B88F3BD1-9F4C-4BF0-A4A0-CF6CD47595A1}
