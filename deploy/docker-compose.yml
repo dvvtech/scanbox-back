@@ -1,0 +1,24 @@
+services:
+  scanbox_api:        
+    image: ghcr.io/dvvtech/scanbox-back:latest      
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Prod      
+    networks:
+      - public-network5
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:      
+        - "traefik.enable=true"      
+        - "traefik.http.routers.scanbox-api.rule=Host(`api.scanbox.tech`) && PathPrefix(`/`)"
+        - "traefik.http.routers.scanbox-api.entrypoints=websecure"      
+        - "traefik.http.routers.scanbox-api.tls.certresolver=letsencrypt"     
+        - "traefik.http.services.scanbox-api.loadbalancer.server.port=8080"
+        - "traefik.http.middlewares.scanbox-stripprefix.stripprefix.prefixes=/"
+        - "traefik.http.routers.scanbox-api.middlewares=scanbox-stripprefix"
+
+networks:
+  public-network5:
+    external: true
