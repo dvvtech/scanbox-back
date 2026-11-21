@@ -8,7 +8,8 @@ var app = builder.Build();
 // Configure the HTTP request pipeline.
 app.UseWebSockets(new WebSocketOptions
 {
-    KeepAliveInterval = TimeSpan.FromSeconds(30)
+    KeepAliveInterval = TimeSpan.FromSeconds(5),
+    KeepAliveTimeout = TimeSpan.FromSeconds(5)
 });
 
 app.Map("/ws", Scanbox.Api.DeviceWebSocketEndpoint.HandleAsync);
