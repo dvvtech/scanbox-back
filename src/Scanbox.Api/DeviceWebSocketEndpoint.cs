@@ -11,6 +11,9 @@ public static class DeviceWebSocketEndpoint
 {
     private static readonly ConcurrentDictionary<string, Peer> Devices = new();
     private static readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, Peer>> Browsers = new();
+    private static readonly ConcurrentDictionary<string, FailureWindow> PairingFailures = new();
+    private static readonly TimeSpan PairingFailureWindow = TimeSpan.FromMinutes(5);
+    private const int MaxPairingFailures = 5;
 
     public static async Task HandleAsync(HttpContext context)
     {
@@ -26,7 +29,7 @@ public static class DeviceWebSocketEndpoint
         if (mac.Length == 0 || token.Length == 0 || (role != "device" && role != "web"))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
-            await context.Response.WriteAsync("Expected role=device|web, a valid mac, and a 32-character pairing token.");
+            await context.Response.WriteAsync("Expected role=device|web, a valid mac, and a 5-digit pairing code.");
             return;
         }
 
@@ -147,15 +150,28 @@ public static class DeviceWebSocketEndpoint
                 return;
             }
 
-            if (!TokensMatch(device.Token, token))
+            if (IsPairingLocked(mac))
             {
                 await browser.SendTextAsync(JsonSerializer.Serialize(new
                 {
                     type = "error",
-                    message = "Pairing code does not match this device."
+                    message = "Слишком много неверных кодов. Попробуйте ещё раз через 5 минут."
                 }), cancellationToken);
                 return;
             }
+
+            if (!TokensMatch(device.Token, token))
+            {
+                RecordPairingFailure(mac);
+                await browser.SendTextAsync(JsonSerializer.Serialize(new
+                {
+                    type = "error",
+                    message = "Код сопряжения не подходит к этому устройству."
+                }), cancellationToken);
+                return;
+            }
+
+            ClearPairingFailures(mac);
 
             string command = JsonSerializer.Serialize(new
             {
@@ -226,6 +242,65 @@ public static class DeviceWebSocketEndpoint
         return Encoding.UTF8.GetString(message.ToArray());
     }
 
+    private static bool IsPairingLocked(string mac)
+    {
+        return PairingFailures.TryGetValue(mac, out FailureWindow? window)
+            && window.IsLocked(DateTimeOffset.UtcNow);
+    }
+
+    private static void RecordPairingFailure(string mac)
+    {
+        PairingFailures.GetOrAdd(mac, _ => new FailureWindow()).Record(DateTimeOffset.UtcNow);
+    }
+
+    private static void ClearPairingFailures(string mac)
+    {
+        if (PairingFailures.TryGetValue(mac, out FailureWindow? window))
+        {
+            window.Clear();
+        }
+    }
+
+    private sealed class FailureWindow
+    {
+        private readonly object _sync = new();
+        private readonly Queue<DateTimeOffset> _failures = new();
+
+        public void Record(DateTimeOffset now)
+        {
+            lock (_sync)
+            {
+                RemoveExpired(now);
+                _failures.Enqueue(now);
+            }
+        }
+
+        public bool IsLocked(DateTimeOffset now)
+        {
+            lock (_sync)
+            {
+                RemoveExpired(now);
+                return _failures.Count >= MaxPairingFailures;
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_sync)
+            {
+                _failures.Clear();
+            }
+        }
+
+        private void RemoveExpired(DateTimeOffset now)
+        {
+            while (_failures.Count > 0 && now - _failures.Peek() >= PairingFailureWindow)
+            {
+                _failures.Dequeue();
+            }
+        }
+    }
+
     private static string NormalizeMac(string value)
     {
         string normalized = value.Trim().Replace('-', ':').ToUpperInvariant();
@@ -235,7 +310,7 @@ public static class DeviceWebSocketEndpoint
     private static string NormalizeToken(string value)
     {
         string normalized = value.Trim().ToUpperInvariant();
-        return Regex.IsMatch(normalized, "^[0-9A-F]{32}$") ? normalized : string.Empty;
+        return Regex.IsMatch(normalized, "^[0-9]{5}$") ? normalized : string.Empty;
     }
 
     private static bool TokensMatch(string left, string right)
