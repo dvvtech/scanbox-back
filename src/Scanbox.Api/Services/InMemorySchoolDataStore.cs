@@ -33,6 +33,24 @@ public sealed class InMemorySchoolDataStore : ISchoolDataStore
     private readonly IReadOnlyDictionary<string, ClassSchedule> _schedules =
         new Dictionary<string, ClassSchedule>(StringComparer.OrdinalIgnoreCase)
         {
+            ["8А"] = new(
+                "8А",
+                [
+                    new(1, "Понедельник", [new(1, 3), new(2, 1), new(3, 5), new(4, 6), new(5, 7), new(6, 14)]),
+                    new(2, "Вторник", [new(1, 4), new(2, 3), new(3, 2), new(4, 10), new(5, 9), new(6, 13)]),
+                    new(3, "Среда", [new(1, 1), new(2, 3), new(3, 5), new(4, 8), new(5, 11), new(6, 14)]),
+                    new(4, "Четверг", [new(1, 4), new(2, 2), new(3, 6), new(4, 7), new(5, 9), new(6, 15)]),
+                    new(5, "Пятница", [new(1, 3), new(2, 1), new(3, 5), new(4, 12), new(5, 10), new(6, 14)])
+                ]),
+            ["8Б"] = new(
+                "8Б",
+                [
+                    new(1, "Понедельник", [new(1, 1), new(2, 4), new(3, 5), new(4, 7), new(5, 8), new(6, 14)]),
+                    new(2, "Вторник", [new(1, 3), new(2, 4), new(3, 2), new(4, 6), new(5, 10), new(6, 13)]),
+                    new(3, "Среда", [new(1, 2), new(2, 1), new(3, 3), new(4, 9), new(5, 11), new(6, 14)]),
+                    new(4, "Четверг", [new(1, 4), new(2, 5), new(3, 6), new(4, 8), new(5, 9), new(6, 15)]),
+                    new(5, "Пятница", [new(1, 3), new(2, 2), new(3, 1), new(4, 10), new(5, 12), new(6, 14)])
+                ]),
             ["8В"] = new(
                 "8В",
                 [
