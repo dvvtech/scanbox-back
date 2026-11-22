@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Scanbox.Api.Models;
@@ -16,6 +17,10 @@ public static class DeviceWebSocketEndpoint
     private static readonly ConcurrentDictionary<string, DeviceMappingSnapshot> DeviceMappings = new();
     private static readonly ConcurrentDictionary<string, DeviceClassSnapshot> DeviceClasses = new();
     private static readonly ConcurrentDictionary<string, FailureWindow> PairingFailures = new();
+    private static readonly JsonSerializerOptions DeviceCommandJsonOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     private static readonly TimeSpan PairingFailureWindow = TimeSpan.FromMinutes(5);
     private const int MaxPairingFailures = 5;
 
@@ -272,7 +277,7 @@ public static class DeviceWebSocketEndpoint
                 "confirmTagMapping" => JsonSerializer.Serialize(new { type = "confirmTagMapping", subjectId, rfidTag }),
                 "deleteTagMapping" => JsonSerializer.Serialize(new { type = "deleteTagMapping", subjectId }),
                 "resetWifi" => JsonSerializer.Serialize(new { type = "resetWifi" }),
-                "setClass" => JsonSerializer.Serialize(new { type = "setClass", className }),
+                "setClass" => JsonSerializer.Serialize(new { type = "setClass", className }, DeviceCommandJsonOptions),
                 _ => throw new InvalidOperationException("Unsupported command.")
             };
             await device.SendTextAsync(command, cancellationToken);
