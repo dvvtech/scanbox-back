@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Scanbox.Api.Services;
 
 namespace Scanbox.Api;
 
@@ -11,6 +12,7 @@ public static class DeviceWebSocketEndpoint
 {
     private static readonly ConcurrentDictionary<string, Peer> Devices = new();
     private static readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, Peer>> Browsers = new();
+    private static readonly ConcurrentDictionary<string, DeviceMappingSnapshot> DeviceMappings = new();
     private static readonly ConcurrentDictionary<string, FailureWindow> PairingFailures = new();
     private static readonly TimeSpan PairingFailureWindow = TimeSpan.FromMinutes(5);
     private const int MaxPairingFailures = 5;
@@ -68,6 +70,17 @@ public static class DeviceWebSocketEndpoint
                 type = "deviceStatus",
                 online
             }), cancellationToken);
+            var subjects = context.RequestServices.GetRequiredService<ISchoolDataStore>().Subjects;
+            await peer.SendTextAsync(JsonSerializer.Serialize(new
+            {
+                type = "subjects",
+                subjects = subjects.Select(subject => new { id = subject.Id, name = subject.Name })
+            }), cancellationToken);
+            if (DeviceMappings.TryGetValue(mac, out DeviceMappingSnapshot? snapshot)
+                && snapshot is not null && TokensMatch(snapshot.Token, token))
+            {
+                await peer.SendTextAsync(snapshot.Message, cancellationToken);
+            }
         }
 
         try
@@ -80,6 +93,10 @@ public static class DeviceWebSocketEndpoint
                 if (role == "device")
                 {
                     Console.WriteLine("[WS] Device " + mac + " sent: " + message);
+                    if (message.Contains("\"type\":\"tagMappings\"", StringComparison.Ordinal))
+                    {
+                        DeviceMappings[mac] = new DeviceMappingSnapshot(token, message);
+                    }
                     await BroadcastToBrowsersAsync(mac, token, message, cancellationToken);
                 }
                 else
@@ -126,15 +143,53 @@ public static class DeviceWebSocketEndpoint
         {
             using JsonDocument document = JsonDocument.Parse(message);
             JsonElement root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("type", out JsonElement type) || type.GetString() != "scan")
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("type", out JsonElement typeElement)
+                || typeElement.ValueKind != JsonValueKind.String)
+            {
+                await SendUnsupportedCommandAsync(browser, cancellationToken);
+                return;
+            }
+
+            string commandType = typeElement.GetString() ?? string.Empty;
+            bool isScan = commandType == "scan";
+            bool isTagScan = commandType == "scanTag";
+            bool isMappingConfirm = commandType == "confirmTagMapping";
+            bool isMappingDelete = commandType == "deleteTagMapping";
+            if (!isScan && !isTagScan && !isMappingConfirm && !isMappingDelete)
+            {
+                await SendUnsupportedCommandAsync(browser, cancellationToken);
+                return;
+            }
+
+            int subjectId = 0;
+            string rfidTag = string.Empty;
+            if ((isTagScan || isMappingConfirm || isMappingDelete)
+                && (!root.TryGetProperty("subjectId", out JsonElement subjectIdElement)
+                    || !subjectIdElement.TryGetInt32(out subjectId)
+                    || subjectId <= 0))
             {
                 await browser.SendTextAsync(JsonSerializer.Serialize(new
                 {
                     type = "error",
-                    message = "Unsupported command."
+                    message = "Для RFID-команды требуется корректный subjectId."
                 }), cancellationToken);
                 return;
             }
+
+            if (isMappingConfirm
+                && (!root.TryGetProperty("rfidTag", out JsonElement tagElement)
+                    || tagElement.ValueKind != JsonValueKind.String
+                    || !Regex.IsMatch(tagElement.GetString() ?? string.Empty, "^(?:[0-9A-Fa-f]{2}){1,31}$")))
+            {
+                await browser.SendTextAsync(JsonSerializer.Serialize(new
+                {
+                    type = "error",
+                    message = "Для подтверждения требуется корректный EPC метки."
+                }), cancellationToken);
+                return;
+            }
+            if (isMappingConfirm) rfidTag = root.GetProperty("rfidTag").GetString()!.ToUpperInvariant();
 
             string requestId = root.TryGetProperty("requestId", out JsonElement id)
                 ? id.GetString() ?? Guid.NewGuid().ToString("N")
@@ -173,18 +228,34 @@ public static class DeviceWebSocketEndpoint
 
             ClearPairingFailures(mac);
 
-            string command = JsonSerializer.Serialize(new
+            string command = commandType switch
             {
-                type = "scan",
-                requestId
-            });
+                "scan" => JsonSerializer.Serialize(new { type = "scan", requestId }),
+                "scanTag" => JsonSerializer.Serialize(new { type = "scanTag", subjectId }),
+                "confirmTagMapping" => JsonSerializer.Serialize(new { type = "confirmTagMapping", subjectId, rfidTag }),
+                "deleteTagMapping" => JsonSerializer.Serialize(new { type = "deleteTagMapping", subjectId }),
+                _ => throw new InvalidOperationException("Unsupported command.")
+            };
             await device.SendTextAsync(command, cancellationToken);
-            await browser.SendTextAsync(JsonSerializer.Serialize(new
+
+            if (isScan)
             {
-                type = "scanQueued",
-                requestId
-            }), cancellationToken);
-            Console.WriteLine("[WS] Scan request routed to " + mac + " (request " + requestId + ").");
+                await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "scanQueued", requestId }), cancellationToken);
+            }
+            else if (isTagScan)
+            {
+                await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "tagScanQueued", subjectId }), cancellationToken);
+            }
+            else if (isMappingConfirm)
+            {
+                await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "tagMappingConfirmQueued", subjectId }), cancellationToken);
+            }
+            else
+            {
+                await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "tagMappingDeleteQueued", subjectId }), cancellationToken);
+            }
+
+            Console.WriteLine("[WS] " + commandType + " routed to " + mac + " for subject " + subjectId + ".");
         }
         catch (JsonException)
         {
@@ -195,7 +266,12 @@ public static class DeviceWebSocketEndpoint
             }), cancellationToken);
         }
     }
-
+    private static Task SendUnsupportedCommandAsync(Peer browser, CancellationToken cancellationToken) =>
+        browser.SendTextAsync(JsonSerializer.Serialize(new
+        {
+            type = "error",
+            message = "Unsupported command."
+        }), cancellationToken);
     private static async Task BroadcastToBrowsersAsync(string mac, string deviceToken, string message, CancellationToken cancellationToken)
     {
         if (!Browsers.TryGetValue(mac, out ConcurrentDictionary<Guid, Peer>? peers)) return;
@@ -340,6 +416,8 @@ public static class DeviceWebSocketEndpoint
         {
         }
     }
+
+    private sealed record DeviceMappingSnapshot(string Token, string Message);
 
     private sealed class Peer
     {
