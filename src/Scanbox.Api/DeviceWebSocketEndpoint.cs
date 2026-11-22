@@ -14,6 +14,7 @@ public static class DeviceWebSocketEndpoint
     private static readonly ConcurrentDictionary<string, Peer> Devices = new();
     private static readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, Peer>> Browsers = new();
     private static readonly ConcurrentDictionary<string, DeviceMappingSnapshot> DeviceMappings = new();
+    private static readonly ConcurrentDictionary<string, DeviceClassSnapshot> DeviceClasses = new();
     private static readonly ConcurrentDictionary<string, FailureWindow> PairingFailures = new();
     private static readonly TimeSpan PairingFailureWindow = TimeSpan.FromMinutes(5);
     private const int MaxPairingFailures = 5;
@@ -78,25 +79,12 @@ public static class DeviceWebSocketEndpoint
                 type = "subjects",
                 subjects = subjects.Select(subject => new { id = subject.Id, name = subject.Name })
             }), cancellationToken);
-            ClassSchedule? classSchedule = schoolData.GetSchedule("8В");
-            await peer.SendTextAsync(JsonSerializer.Serialize(new
-            {
-                type = "classSchedule",
-                schedule = classSchedule is null ? null : new
-                {
-                    className = classSchedule.ClassName,
-                    days = classSchedule.Days.Select(day => new
-                    {
-                        dayOfWeek = day.DayOfWeek,
-                        dayName = day.DayName,
-                        lessons = day.Lessons.Select(lesson => new
-                        {
-                            lessonNumber = lesson.LessonNumber,
-                            subjectId = lesson.SubjectId
-                        })
-                    })
-                }
-            }), cancellationToken);
+            string className = DeviceClasses.TryGetValue(mac, out DeviceClassSnapshot? classSnapshot)
+                && classSnapshot is not null && TokensMatch(classSnapshot.Token, token)
+                ? classSnapshot.ClassName
+                : string.Empty;
+            await peer.SendTextAsync(JsonSerializer.Serialize(new { type = "deviceClass", className }), cancellationToken);
+            await SendClassScheduleAsync(peer, schoolData, className, cancellationToken);
             if (DeviceMappings.TryGetValue(mac, out DeviceMappingSnapshot? snapshot)
                 && snapshot is not null && TokensMatch(snapshot.Token, token))
             {
@@ -118,7 +106,17 @@ public static class DeviceWebSocketEndpoint
                     {
                         DeviceMappings[mac] = new DeviceMappingSnapshot(token, message);
                     }
+                    bool hasDeviceClass = TryReadDeviceClass(message, out string deviceClass);
+                    if (hasDeviceClass)
+                    {
+                        DeviceClasses[mac] = new DeviceClassSnapshot(token, deviceClass);
+                    }
                     await BroadcastToBrowsersAsync(mac, token, message, cancellationToken);
+                    if (hasDeviceClass)
+                    {
+                        var schoolData = context.RequestServices.GetRequiredService<ISchoolDataStore>();
+                        await SendClassScheduleToBrowsersAsync(mac, token, schoolData, deviceClass, cancellationToken);
+                    }
                 }
                 else
                 {
@@ -179,7 +177,8 @@ public static class DeviceWebSocketEndpoint
             bool isMappingConfirm = commandType == "confirmTagMapping";
             bool isMappingDelete = commandType == "deleteTagMapping";
             bool isWifiReset = commandType == "resetWifi";
-            if (!isScan && !isScheduleScan && !isTagScan && !isMappingConfirm && !isMappingDelete && !isWifiReset)
+            bool isClassChange = commandType == "setClass";
+            if (!isScan && !isScheduleScan && !isTagScan && !isMappingConfirm && !isMappingDelete && !isWifiReset && !isClassChange)
             {
                 await SendUnsupportedCommandAsync(browser, cancellationToken);
                 return;
@@ -187,6 +186,20 @@ public static class DeviceWebSocketEndpoint
 
             int subjectId = 0;
             string rfidTag = string.Empty;
+            string className = string.Empty;
+            if (isClassChange
+                && (!root.TryGetProperty("className", out JsonElement classElement)
+                    || classElement.ValueKind != JsonValueKind.String
+                    || !IsValidSchoolClass(classElement.GetString() ?? string.Empty)))
+            {
+                await browser.SendTextAsync(JsonSerializer.Serialize(new
+                {
+                    type = "error",
+                    message = "Выберите класс 8А, 8Б или 8В."
+                }), cancellationToken);
+                return;
+            }
+            if (isClassChange) className = root.GetProperty("className").GetString()!;
             if ((isTagScan || isMappingConfirm || isMappingDelete)
                 && (!root.TryGetProperty("subjectId", out JsonElement subjectIdElement)
                     || !subjectIdElement.TryGetInt32(out subjectId)
@@ -259,6 +272,7 @@ public static class DeviceWebSocketEndpoint
                 "confirmTagMapping" => JsonSerializer.Serialize(new { type = "confirmTagMapping", subjectId, rfidTag }),
                 "deleteTagMapping" => JsonSerializer.Serialize(new { type = "deleteTagMapping", subjectId }),
                 "resetWifi" => JsonSerializer.Serialize(new { type = "resetWifi" }),
+                "setClass" => JsonSerializer.Serialize(new { type = "setClass", className }),
                 _ => throw new InvalidOperationException("Unsupported command.")
             };
             await device.SendTextAsync(command, cancellationToken);
@@ -283,12 +297,18 @@ public static class DeviceWebSocketEndpoint
             {
                 await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "wifiResetQueued" }), cancellationToken);
             }
+            else if (isClassChange)
+            {
+                await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "deviceClassQueued", className }), cancellationToken);
+            }
             else
             {
                 await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "tagMappingDeleteQueued", subjectId }), cancellationToken);
             }
 
-            Console.WriteLine("[WS] " + commandType + " routed to " + mac + " for subject " + subjectId + ".");
+            Console.WriteLine(isClassChange
+                ? "[WS] Class change routed to " + mac + ": " + (className.Length == 0 ? "not set" : className) + "."
+                : "[WS] " + commandType + " routed to " + mac + " for subject " + subjectId + ".");
         }
         catch (JsonException)
         {
@@ -305,6 +325,83 @@ public static class DeviceWebSocketEndpoint
             type = "error",
             message = "Unsupported command."
         }), cancellationToken);
+
+    private static bool TryReadDeviceClass(string message, out string className)
+    {
+        className = string.Empty;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(message);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("type", out JsonElement typeElement)
+                || typeElement.ValueKind != JsonValueKind.String
+                || typeElement.GetString() != "deviceClass"
+                || !root.TryGetProperty("className", out JsonElement classElement)
+                || classElement.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            className = classElement.GetString() ?? string.Empty;
+            return IsValidSchoolClass(className);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsValidSchoolClass(string className) =>
+        className.Length == 0 || className is "8А" or "8Б" or "8В";
+
+    private static async Task SendClassScheduleAsync(
+        Peer browser,
+        ISchoolDataStore schoolData,
+        string className,
+        CancellationToken cancellationToken)
+    {
+        ClassSchedule? classSchedule = className.Length == 0 ? null : schoolData.GetSchedule(className);
+        object? schedule = classSchedule is null ? null : new
+        {
+            className = classSchedule.ClassName,
+            days = classSchedule.Days.Select(day => new
+            {
+                dayOfWeek = day.DayOfWeek,
+                dayName = day.DayName,
+                lessons = day.Lessons.Select(lesson => new
+                {
+                    lessonNumber = lesson.LessonNumber,
+                    subjectId = lesson.SubjectId
+                })
+            })
+        };
+
+        await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "classSchedule", schedule }), cancellationToken);
+    }
+
+    private static async Task SendClassScheduleToBrowsersAsync(
+        string mac,
+        string deviceToken,
+        ISchoolDataStore schoolData,
+        string className,
+        CancellationToken cancellationToken)
+    {
+        if (!Browsers.TryGetValue(mac, out ConcurrentDictionary<Guid, Peer>? peers)) return;
+
+        foreach (Peer browser in peers.Values)
+        {
+            if (!TokensMatch(deviceToken, browser.Token)) continue;
+            try
+            {
+                await SendClassScheduleAsync(browser, schoolData, className, cancellationToken);
+            }
+            catch (WebSocketException)
+            {
+            }
+        }
+    }
+
     private static async Task BroadcastToBrowsersAsync(string mac, string deviceToken, string message, CancellationToken cancellationToken)
     {
         if (!Browsers.TryGetValue(mac, out ConcurrentDictionary<Guid, Peer>? peers)) return;
@@ -451,6 +548,7 @@ public static class DeviceWebSocketEndpoint
     }
 
     private sealed record DeviceMappingSnapshot(string Token, string Message);
+    private sealed record DeviceClassSnapshot(string Token, string ClassName);
 
     private sealed class Peer
     {
