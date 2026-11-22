@@ -1,6 +1,11 @@
 @Scanbox.Api_HostAddress = http://localhost:5119
 
-GET {{Scanbox.Api_HostAddress}}/weatherforecast/
+GET {{Scanbox.Api_HostAddress}}/api/school/subjects
+Accept: application/json
+
+###
+
+GET {{Scanbox.Api_HostAddress}}/api/school/classes/7%D0%92/schedule
 Accept: application/json
 
 ###
