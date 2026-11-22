@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Scanbox.Api.Models;
 using Scanbox.Api.Services;
 
 namespace Scanbox.Api;
@@ -70,11 +71,31 @@ public static class DeviceWebSocketEndpoint
                 type = "deviceStatus",
                 online
             }), cancellationToken);
-            var subjects = context.RequestServices.GetRequiredService<ISchoolDataStore>().Subjects;
+            var schoolData = context.RequestServices.GetRequiredService<ISchoolDataStore>();
+            var subjects = schoolData.Subjects;
             await peer.SendTextAsync(JsonSerializer.Serialize(new
             {
                 type = "subjects",
                 subjects = subjects.Select(subject => new { id = subject.Id, name = subject.Name })
+            }), cancellationToken);
+            ClassSchedule? classSchedule = schoolData.GetSchedule("7В");
+            await peer.SendTextAsync(JsonSerializer.Serialize(new
+            {
+                type = "classSchedule",
+                schedule = classSchedule is null ? null : new
+                {
+                    className = classSchedule.ClassName,
+                    days = classSchedule.Days.Select(day => new
+                    {
+                        dayOfWeek = day.DayOfWeek,
+                        dayName = day.DayName,
+                        lessons = day.Lessons.Select(lesson => new
+                        {
+                            lessonNumber = lesson.LessonNumber,
+                            subjectId = lesson.SubjectId
+                        })
+                    })
+                }
             }), cancellationToken);
             if (DeviceMappings.TryGetValue(mac, out DeviceMappingSnapshot? snapshot)
                 && snapshot is not null && TokensMatch(snapshot.Token, token))
@@ -153,10 +174,11 @@ public static class DeviceWebSocketEndpoint
 
             string commandType = typeElement.GetString() ?? string.Empty;
             bool isScan = commandType == "scan";
+            bool isScheduleScan = commandType == "scanSchedule";
             bool isTagScan = commandType == "scanTag";
             bool isMappingConfirm = commandType == "confirmTagMapping";
             bool isMappingDelete = commandType == "deleteTagMapping";
-            if (!isScan && !isTagScan && !isMappingConfirm && !isMappingDelete)
+            if (!isScan && !isScheduleScan && !isTagScan && !isMappingConfirm && !isMappingDelete)
             {
                 await SendUnsupportedCommandAsync(browser, cancellationToken);
                 return;
@@ -231,6 +253,7 @@ public static class DeviceWebSocketEndpoint
             string command = commandType switch
             {
                 "scan" => JsonSerializer.Serialize(new { type = "scan", requestId }),
+                "scanSchedule" => JsonSerializer.Serialize(new { type = "scanSchedule" }),
                 "scanTag" => JsonSerializer.Serialize(new { type = "scanTag", subjectId }),
                 "confirmTagMapping" => JsonSerializer.Serialize(new { type = "confirmTagMapping", subjectId, rfidTag }),
                 "deleteTagMapping" => JsonSerializer.Serialize(new { type = "deleteTagMapping", subjectId }),
@@ -241,6 +264,10 @@ public static class DeviceWebSocketEndpoint
             if (isScan)
             {
                 await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "scanQueued", requestId }), cancellationToken);
+            }
+            else if (isScheduleScan)
+            {
+                await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "scheduleScanQueued" }), cancellationToken);
             }
             else if (isTagScan)
             {
