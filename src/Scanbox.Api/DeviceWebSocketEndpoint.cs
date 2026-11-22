@@ -78,7 +78,7 @@ public static class DeviceWebSocketEndpoint
                 type = "subjects",
                 subjects = subjects.Select(subject => new { id = subject.Id, name = subject.Name })
             }), cancellationToken);
-            ClassSchedule? classSchedule = schoolData.GetSchedule("7В");
+            ClassSchedule? classSchedule = schoolData.GetSchedule("8В");
             await peer.SendTextAsync(JsonSerializer.Serialize(new
             {
                 type = "classSchedule",

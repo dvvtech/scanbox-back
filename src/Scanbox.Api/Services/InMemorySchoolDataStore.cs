@@ -33,8 +33,8 @@ public sealed class InMemorySchoolDataStore : ISchoolDataStore
     private readonly IReadOnlyDictionary<string, ClassSchedule> _schedules =
         new Dictionary<string, ClassSchedule>(StringComparer.OrdinalIgnoreCase)
         {
-            ["7В"] = new(
-                "7В",
+            ["8В"] = new(
+                "8В",
                 [
                     new(1, "Понедельник", [new(1, 3), new(2, 1), new(3, 5), new(4, 7), new(5, 8), new(6, 14)]),
                     new(2, "Вторник", [new(1, 4), new(2, 2), new(3, 5), new(4, 9), new(5, 10), new(6, 13)]),
