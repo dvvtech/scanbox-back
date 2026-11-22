@@ -178,7 +178,8 @@ public static class DeviceWebSocketEndpoint
             bool isTagScan = commandType == "scanTag";
             bool isMappingConfirm = commandType == "confirmTagMapping";
             bool isMappingDelete = commandType == "deleteTagMapping";
-            if (!isScan && !isScheduleScan && !isTagScan && !isMappingConfirm && !isMappingDelete)
+            bool isWifiReset = commandType == "resetWifi";
+            if (!isScan && !isScheduleScan && !isTagScan && !isMappingConfirm && !isMappingDelete && !isWifiReset)
             {
                 await SendUnsupportedCommandAsync(browser, cancellationToken);
                 return;
@@ -257,6 +258,7 @@ public static class DeviceWebSocketEndpoint
                 "scanTag" => JsonSerializer.Serialize(new { type = "scanTag", subjectId }),
                 "confirmTagMapping" => JsonSerializer.Serialize(new { type = "confirmTagMapping", subjectId, rfidTag }),
                 "deleteTagMapping" => JsonSerializer.Serialize(new { type = "deleteTagMapping", subjectId }),
+                "resetWifi" => JsonSerializer.Serialize(new { type = "resetWifi" }),
                 _ => throw new InvalidOperationException("Unsupported command.")
             };
             await device.SendTextAsync(command, cancellationToken);
@@ -276,6 +278,10 @@ public static class DeviceWebSocketEndpoint
             else if (isMappingConfirm)
             {
                 await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "tagMappingConfirmQueued", subjectId }), cancellationToken);
+            }
+            else if (isWifiReset)
+            {
+                await browser.SendTextAsync(JsonSerializer.Serialize(new { type = "wifiResetQueued" }), cancellationToken);
             }
             else
             {
