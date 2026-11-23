@@ -36,7 +36,8 @@ public sealed class InMemorySchoolDataStore : ISchoolDataStore
             ["8А"] = new(
                 "8А",
                 [
-                    new(1, "Понедельник", [new(1, 3), new(2, 1), new(3, 5), new(4, 6), new(5, 7), new(6, 14)]),
+                    //new(1, "Понедельник", [new(1, 3), new(2, 1), new(3, 5), new(4, 6), new(5, 7), new(6, 14)]),
+                    new(1, "Понедельник", [new(1, 6),]),
                     new(2, "Вторник", [new(1, 4), new(2, 3), new(3, 2), new(4, 10), new(5, 9), new(6, 13)]),
                     new(3, "Среда", [new(1, 1), new(2, 3), new(3, 5), new(4, 8), new(5, 11), new(6, 14)]),
                     new(4, "Четверг", [new(1, 4), new(2, 2), new(3, 6), new(4, 7), new(5, 9), new(6, 15)]),
