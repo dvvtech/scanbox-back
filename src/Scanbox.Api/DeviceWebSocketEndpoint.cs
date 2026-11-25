@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Scanbox.Api.DAL;
 using Scanbox.Api.Models;
 using Scanbox.Api.Services;
 
@@ -51,6 +52,7 @@ public static class DeviceWebSocketEndpoint
         using WebSocket socket = await context.WebSockets.AcceptWebSocketAsync();
         var peer = new Peer(socket, token);
         CancellationToken cancellationToken = context.RequestAborted;
+        IDeviceStateRepository deviceStateRepository = context.RequestServices.GetRequiredService<IDeviceStateRepository>();
 
         if (role == "device")
         {
@@ -63,15 +65,20 @@ public static class DeviceWebSocketEndpoint
 
             Console.WriteLine("[WS] Device connected: " + mac);
             await SendDeviceStatusToBrowsersAsync(mac, token, true, cancellationToken);
+            await PersistAsync(
+                () => deviceStateRepository.RegisterConnectionAsync(mac, token, cancellationToken),
+                "register device connection",
+                mac,
+                cancellationToken);
         }
         else
         {
             ConcurrentDictionary<Guid, Peer> peers = Browsers.GetOrAdd(mac, _ => new ConcurrentDictionary<Guid, Peer>());
             peers[peer.Id] = peer;
             Console.WriteLine("[WS] Browser connected for device: " + mac);
-            bool online = Devices.TryGetValue(mac, out Peer? device)
-                && device.Socket.State == WebSocketState.Open
-                && TokensMatch(device.Token, token);
+            bool hasLiveDevice = Devices.TryGetValue(mac, out Peer? device)
+                && device.Socket.State == WebSocketState.Open;
+            bool online = hasLiveDevice && TokensMatch(device!.Token, token);
             await peer.SendTextAsync(JsonSerializer.Serialize(new
             {
                 type = "deviceStatus",
@@ -84,16 +91,37 @@ public static class DeviceWebSocketEndpoint
                 type = "subjects",
                 subjects = subjects.Select(subject => new { id = subject.Id, name = subject.Name })
             }), cancellationToken);
-            string className = DeviceClasses.TryGetValue(mac, out DeviceClassSnapshot? classSnapshot)
-                && classSnapshot is not null && TokensMatch(classSnapshot.Token, token)
-                ? classSnapshot.ClassName
-                : string.Empty;
+            DeviceState? storedDevice = await LoadDeviceStateAsync(deviceStateRepository, mac, cancellationToken);
+            bool storedTokenMatches = storedDevice is not null && TokensMatch(storedDevice.PairingCode, token);
+            // The live device token is authoritative; the DB token is used while the device is offline.
+            bool tokenMatchesDevice = hasLiveDevice
+                ? TokensMatch(device!.Token, token)
+                : storedTokenMatches;
+            string className = string.Empty;
+            if (tokenMatchesDevice)
+            {
+                if (DeviceClasses.TryGetValue(mac, out DeviceClassSnapshot? classSnapshot)
+                    && classSnapshot is not null && TokensMatch(classSnapshot.Token, token))
+                {
+                    className = classSnapshot.ClassName;
+                }
+                else if (storedTokenMatches)
+                {
+                    className = storedDevice!.ClassName;
+                }
+            }
+
             await peer.SendTextAsync(JsonSerializer.Serialize(new { type = "deviceClass", className }), cancellationToken);
             await SendClassScheduleAsync(peer, schoolData, className, cancellationToken);
-            if (DeviceMappings.TryGetValue(mac, out DeviceMappingSnapshot? snapshot)
+            if (tokenMatchesDevice
+                && DeviceMappings.TryGetValue(mac, out DeviceMappingSnapshot? snapshot)
                 && snapshot is not null && TokensMatch(snapshot.Token, token))
             {
                 await peer.SendTextAsync(snapshot.Message, cancellationToken);
+            }
+            else if (tokenMatchesDevice && storedTokenMatches)
+            {
+                await peer.SendTextAsync(BuildTagMappingsMessage(storedDevice!.TagMappings), cancellationToken);
             }
         }
 
@@ -107,9 +135,11 @@ public static class DeviceWebSocketEndpoint
                 if (role == "device")
                 {
                     Console.WriteLine("[WS] Device " + mac + " sent: " + message);
-                    if (message.Contains("\"type\":\"tagMappings\"", StringComparison.Ordinal))
+                    List<RfidTagMapping>? tagMappings = null;
+                    if (TryReadTagMappings(message, out List<RfidTagMapping> parsedMappings))
                     {
                         DeviceMappings[mac] = new DeviceMappingSnapshot(token, message);
+                        tagMappings = parsedMappings;
                     }
                     bool hasDeviceClass = TryReadDeviceClass(message, out string deviceClass);
                     if (hasDeviceClass)
@@ -117,8 +147,21 @@ public static class DeviceWebSocketEndpoint
                         DeviceClasses[mac] = new DeviceClassSnapshot(token, deviceClass);
                     }
                     await BroadcastToBrowsersAsync(mac, token, message, cancellationToken);
+                    if (tagMappings is not null)
+                    {
+                        await PersistAsync(
+                            () => deviceStateRepository.SaveTagMappingsAsync(mac, token, tagMappings, cancellationToken),
+                            "save tag mappings",
+                            mac,
+                            cancellationToken);
+                    }
                     if (hasDeviceClass)
                     {
+                        await PersistAsync(
+                            () => deviceStateRepository.SaveClassNameAsync(mac, token, deviceClass, cancellationToken),
+                            "save device class",
+                            mac,
+                            cancellationToken);
                         var schoolData = context.RequestServices.GetRequiredService<ISchoolDataStore>();
                         await SendClassScheduleToBrowsersAsync(mac, token, schoolData, deviceClass, cancellationToken);
                     }
@@ -330,6 +373,108 @@ public static class DeviceWebSocketEndpoint
             type = "error",
             message = "Unsupported command."
         }), cancellationToken);
+
+    private static bool TryReadTagMappings(string message, out List<RfidTagMapping> mappings)
+    {
+        mappings = [];
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(message);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("type", out JsonElement typeElement)
+                || typeElement.ValueKind != JsonValueKind.String
+                || typeElement.GetString() != "tagMappings"
+                || !root.TryGetProperty("mappings", out JsonElement mappingsElement)
+                || mappingsElement.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            HashSet<int> subjectIds = [];
+            HashSet<string> tags = [];
+            foreach (JsonElement item in mappingsElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object
+                    || !item.TryGetProperty("subjectId", out JsonElement subjectIdElement)
+                    || !subjectIdElement.TryGetInt32(out int subjectId)
+                    || subjectId <= 0
+                    || !item.TryGetProperty("rfidTag", out JsonElement tagElement)
+                    || tagElement.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                string rfidTag = (tagElement.GetString() ?? string.Empty).ToUpperInvariant();
+                if (!Regex.IsMatch(rfidTag, "^(?:[0-9A-Fa-f]{2}){1,31}$")
+                    || !subjectIds.Add(subjectId)
+                    || !tags.Add(rfidTag))
+                {
+                    continue;
+                }
+
+                mappings.Add(new RfidTagMapping(subjectId, rfidTag));
+            }
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string BuildTagMappingsMessage(IReadOnlyList<RfidTagMapping> mappings)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            type = "tagMappings",
+            mappings = mappings.Select(mapping => new
+            {
+                subjectId = mapping.SubjectId,
+                rfidTag = mapping.RfidTag
+            })
+        });
+    }
+
+    private static async Task<DeviceState?> LoadDeviceStateAsync(
+        IDeviceStateRepository repository,
+        string mac,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await repository.GetAsync(mac, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[DB] Failed to load device " + mac + ": " + ex.Message);
+            return null;
+        }
+    }
+
+    private static async Task PersistAsync(
+        Func<Task> action,
+        string operation,
+        string mac,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await action();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[DB] Failed to " + operation + " for " + mac + ": " + ex.Message);
+        }
+    }
 
     private static bool TryReadDeviceClass(string message, out string className)
     {

@@ -3,6 +3,7 @@ services:
     image: ghcr.io/dvvtech/scanbox-back:latest      
     environment:
       - ASPNETCORE_ENVIRONMENT=Prod      
+      # - "ConnectionStrings__ScanboxDb=Host=postgres;Port=5432;Database=scanbox;Username=scanbox;Password=scanbox"
     networks:
       - public-network5
     deploy:
