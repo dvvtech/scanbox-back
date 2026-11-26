@@ -35,12 +35,12 @@ public sealed class InMemorySchoolDataStore : ISchoolDataStore
         {
             ["8А"] = new(
                 "8А",
-                [                    
-                    new(1, "Понедельник", [new(1, 10), new(2, 2), new(3, 3), new(4, 14)]),
-                    new(2, "Вторник", [new(1, 7), new(2, 3), new(3, 4)]),
-                    new(3, "Среда", [new(1, 1), new(2, 8), new(3, 5)]),
-                    new(4, "Четверг", [new(1, 9), new(2, 6), new(3, 3), new(4, 4), new(5, 15)]),
-                    new(5, "Пятница", [new(1, 7), new(2, 12), new(3, 11), new(4, 1), new(5, 16), new(6, 5)])
+                [
+                    new(1, "Понедельник", [new(1, 3), new(2, 1), new(3, 5), new(4, 7), new(5, 8), new(6, 14)]),
+                    new(2, "Вторник", [new(1, 4), new(2, 2), new(3, 5), new(4, 9), new(5, 10), new(6, 13)]),
+                    new(3, "Среда", [new(1, 1), new(2, 3), new(3, 6), new(4, 11), new(5, 2), new(6, 14)]),
+                    new(4, "Четверг", [new(1, 4), new(2, 5), new(3, 7), new(4, 9), new(5, 12), new(6, 15)]),
+                    new(5, "Пятница", [new(1, 3), new(2, 1), new(3, 8), new(4, 10), new(5, 6), new(6, 14)])
                 ]),
             ["8Б"] = new(
                 "8Б",
@@ -54,11 +54,11 @@ public sealed class InMemorySchoolDataStore : ISchoolDataStore
             ["8В"] = new(
                 "8В",
                 [
-                    new(1, "Понедельник", [new(1, 3), new(2, 1), new(3, 5), new(4, 7), new(5, 8), new(6, 14)]),
-                    new(2, "Вторник", [new(1, 4), new(2, 2), new(3, 5), new(4, 9), new(5, 10), new(6, 13)]),
-                    new(3, "Среда", [new(1, 1), new(2, 3), new(3, 6), new(4, 11), new(5, 2), new(6, 14)]),
-                    new(4, "Четверг", [new(1, 4), new(2, 5), new(3, 7), new(4, 9), new(5, 12), new(6, 15)]),
-                    new(5, "Пятница", [new(1, 3), new(2, 1), new(3, 8), new(4, 10), new(5, 6), new(6, 14)])
+                    new(1, "Понедельник", [new(1, 10), new(2, 2), new(3, 3), new(4, 14)]),
+                    new(2, "Вторник", [new(1, 7), new(2, 3), new(3, 4)]),
+                    new(3, "Среда", [new(1, 1), new(2, 8), new(3, 5)]),
+                    new(4, "Четверг", [new(1, 9), new(2, 6), new(3, 3), new(4, 4), new(5, 15)]),
+                    new(5, "Пятница", [new(1, 7), new(2, 12), new(3, 11), new(4, 1), new(5, 16), new(6, 5)])                    
                 ])
         };
 
